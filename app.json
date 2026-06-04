@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "mon-budget-app",
-    "slug": "mon-budget-app",
+    "name": "budgetCasa",
+    "slug": "budgetcasa",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -10,15 +10,17 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#F7F6F3"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": false,
+      "bundleIdentifier": "com.nounem.budgetcasa"
     },
     "android": {
+      "package": "com.nounem.budgetcasa",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#F7F6F3"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
@@ -28,6 +30,11 @@
     },
     "plugins": [
       "expo-sqlite"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "4fef00e5-5ccd-4451-87fa-270cba21dcce"
+      }
+    }
   }
 }
