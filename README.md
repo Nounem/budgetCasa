@@ -2,6 +2,29 @@
 
 Application mobile de gestion budget familial — construite avec React Native & Expo.
 
+## Télécharger l'app
+
+### Android APK
+
+> ⚠️ Le lien expire après 30 jours. Relancer `eas build --platform android --profile preview` pour en générer un nouveau.
+
+**Dernier build** : [Télécharger l'APK Android](https://expo.dev/accounts/nounem/projects/mon-budget-app/builds/e57b9462-ce28-4f7f-9fe2-c864b6616ef6)
+
+Pour installer :
+1. Télécharge le fichier `.apk` depuis le lien ci-dessus
+2. Sur Android → **Réglages → Sécurité → Sources inconnues → Activer**
+3. Ouvre le fichier téléchargé et installe
+
+### iOS
+
+Installation via Xcode (gratuit) :
+```bash
+git clone https://github.com/Nounem/budgetCasa.git
+cd budgetCasa
+npm install
+npx expo run:ios --device
+```
+
 ## Fonctionnalités
 
 - **Tableau de bord** — solde disponible, budget quotidien, camembert de répartition
@@ -23,25 +46,27 @@ Application mobile de gestion budget familial — construite avec React Native &
 | expo-print + expo-sharing | Export PDF |
 | OpenRouter API | Analyse IA |
 
-## Lancer le projet
+## Lancer le projet en développement
 
 ```bash
-# Installer les dépendances
 npm install
-
-# Lancer le serveur de développement
 npx expo start
-
-# Scanner le QR code avec Expo Go (iOS/Android)
+# Scanner le QR code avec Expo Go
 ```
 
-## Structure du projet
+## Générer un nouveau build Android
+
+```bash
+eas build --platform android --profile preview
+```
+
+## Structure
 
 ```
 src/
-├── screens/        # Les 5 écrans de l'app
-├── db/             # Base de données SQLite (schema + requêtes)
-└── components/     # Composants réutilisables (DonutChart...)
+├── screens/        # 5 écrans (Dashboard, Dépenses, Charges, Prévisions, Paramètres)
+├── db/             # SQLite — schema + requêtes
+└── components/     # DonutChart SVG
 ```
 
 ## Licence
