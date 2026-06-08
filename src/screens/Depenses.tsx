@@ -8,7 +8,7 @@ import { Plus, Receipt, CreditCard } from 'lucide-react-native';
 
 import {
   getDepensesMois, ajouterDepense, modifierDepense, supprimerDepense,
-  getCategories, Depense, Categorie,
+  getCategories, Depense, Categorie, BENEFICIAIRES,
 } from '../db/queries';
 
 const P = {
@@ -33,11 +33,12 @@ function ModalDepense({ visible, categories, depenseAModifier, onFermer, onSauve
   visible: boolean; categories: Categorie[];
   depenseAModifier: Depense | null;
   onFermer: () => void;
-  onSauvegarder: (montant: number, desc: string, cat: number | null, id?: number) => void;
+  onSauvegarder: (montant: number, desc: string, cat: number | null, id?: number, benef?: string) => void;
 }) {
-  const [montant, setMontant]     = useState('');
-  const [description, setDesc]    = useState('');
-  const [categorieId, setCatId]   = useState<number | null>(null);
+  const [montant, setMontant]       = useState('');
+  const [description, setDesc]      = useState('');
+  const [categorieId, setCatId]     = useState<number | null>(null);
+  const [beneficiaire, setBenef]    = useState('personnel');
 
   const estMod = depenseAModifier !== null;
 
@@ -46,15 +47,16 @@ function ModalDepense({ visible, categories, depenseAModifier, onFermer, onSauve
       setMontant(depenseAModifier.montant.toString());
       setDesc(depenseAModifier.description || '');
       setCatId(depenseAModifier.categorie_id);
-    } else { setMontant(''); setDesc(''); setCatId(null); }
+      setBenef(depenseAModifier.beneficiaire || 'personnel');
+    } else { setMontant(''); setDesc(''); setCatId(null); setBenef('personnel'); }
   });
 
-  function reset() { setMontant(''); setDesc(''); setCatId(null); }
+  function reset() { setMontant(''); setDesc(''); setCatId(null); setBenef('personnel'); }
 
   function valider() {
     const m = parseFloat(montant.replace(',', '.'));
     if (isNaN(m) || m <= 0) { Alert.alert('', 'Saisis un montant valide'); return; }
-    onSauvegarder(m, description.trim(), categorieId, depenseAModifier?.id);
+    onSauvegarder(m, description.trim(), categorieId, depenseAModifier?.id, beneficiaire);
     reset(); onFermer();
   }
 
@@ -80,6 +82,21 @@ function ModalDepense({ visible, categories, depenseAModifier, onFermer, onSauve
           <Text style={ms.label}>Description (optionnel)</Text>
           <TextInput style={ms.input} value={description} onChangeText={setDesc}
             placeholder="ex: Courses Carrefour" placeholderTextColor="#C4C4C4" />
+
+          {/* Bénéficiaire */}
+          <Text style={ms.label}>Pour qui ?</Text>
+          <View style={ms.cats}>
+            {BENEFICIAIRES.map(b => (
+              <TouchableOpacity key={b.id}
+                style={[ms.cat, beneficiaire === b.id && { borderColor: '#065F46', backgroundColor: '#D1FAE5' }]}
+                onPress={() => setBenef(b.id)}>
+                <Text style={{ fontSize: 14 }}>{b.emoji}</Text>
+                <Text style={[ms.cat_texte, beneficiaire === b.id && { color: '#065F46', fontWeight: '700' }]}>
+                  {b.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
 
           <Text style={ms.label}>Catégorie</Text>
           <View style={ms.cats}>
@@ -157,7 +174,10 @@ function ItemDepense({ depense, onModifier, onSupprimer }: {
         <Text style={styles.item_desc} numberOfLines={1}>
           {depense.description || depense.categorie_nom}
         </Text>
-        <Text style={styles.item_cat}>{depense.categorie_nom} · {depense.date}</Text>
+        <Text style={styles.item_cat}>
+          {BENEFICIAIRES.find(b => b.id === depense.beneficiaire)?.emoji ?? '👤'}{' '}
+          {depense.categorie_nom} · {depense.date}
+        </Text>
       </View>
       <Text style={styles.item_montant}>-{fmt(depense.montant)}</Text>
     </TouchableOpacity>
@@ -183,9 +203,9 @@ export default function Depenses() {
     setCategories(getCategories());
   }
 
-  function handleSauvegarder(montant: number, desc: string, cat: number | null, id?: number) {
-    if (id !== undefined) modifierDepense(id, montant, desc, cat);
-    else ajouterDepense(montant, desc, cat);
+  function handleSauvegarder(montant: number, desc: string, cat: number | null, id?: number, benef: string = 'personnel') {
+    if (id !== undefined) modifierDepense(id, montant, desc, cat, benef);
+    else ajouterDepense(montant, desc, cat, benef);
     charger();
   }
 

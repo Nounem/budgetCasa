@@ -4,12 +4,13 @@ import {
   TextInput, Modal, Alert, Platform, Switch,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { Plus, Repeat2 } from 'lucide-react-native';
+import { Plus, Repeat2, CreditCard } from 'lucide-react-native';
 
 import {
   getChargesFixes, ajouterChargeFix, modifierChargeFix,
   toggleChargeFix, supprimerChargeFix,
-  getCategories, ChargeFix, Categorie,
+  getCategories, getPrets, ajouterPret, supprimerPret,
+  ChargeFix, Categorie, Pret,
 } from '../db/queries';
 
 const P = {
@@ -172,6 +173,12 @@ export default function Charges() {
   const [categories, setCategories]   = useState<Categorie[]>([]);
   const [modalVisible, setModal]      = useState(false);
   const [aModifier, setAModifier]     = useState<ChargeFix | null>(null);
+  const [prets, setPrets]             = useState<Pret[]>([]);
+  const [modalPret, setModalPret]     = useState(false);
+  const [nomP, setNomP]               = useState('');
+  const [montantP, setMontantP]       = useState('');
+  const [mensualiteP, setMensualiteP] = useState('');
+  const [dureeP, setDureeP]           = useState('');
 
   useFocusEffect(useCallback(() => {
     if (Platform.OS === 'web') return;
@@ -181,6 +188,21 @@ export default function Charges() {
   function charger() {
     setCharges(getChargesFixes());
     setCategories(getCategories('fixe'));
+    setPrets(getPrets());
+  }
+
+  function ajouterP() {
+    const m = parseFloat(montantP.replace(',', '.'));
+    const men = parseFloat(mensualiteP.replace(',', '.'));
+    const dur = parseInt(dureeP);
+    if (!nomP.trim() || isNaN(m) || isNaN(men) || isNaN(dur)) {
+      Alert.alert('', 'Tous les champs sont requis'); return;
+    }
+    const now = new Date();
+    ajouterPret(nomP.trim(), m, men, now.getMonth() + 1, now.getFullYear(), dur);
+    setNomP(''); setMontantP(''); setMensualiteP(''); setDureeP('');
+    setModalPret(false);
+    charger();
   }
 
   function handleSauvegarder(nom: string, montant: number, cat: number | null, jour: number, id?: number) {
@@ -235,6 +257,77 @@ export default function Charges() {
             />
           ))
         )}
+        {/* ── Section Prêts ─────────────────────────── */}
+        <View style={styles.prets_section}>
+          <View style={styles.prets_header}>
+            <View>
+              <Text style={styles.prets_titre}>Prêts en cours</Text>
+              <Text style={styles.prets_sous}>Crédits, prêts personnels...</Text>
+            </View>
+            <TouchableOpacity style={styles.prets_btn} onPress={() => setModalPret(true)}>
+              <Plus size={14} color={P.blanc} strokeWidth={2.5} />
+              <Text style={styles.prets_btn_texte}>Ajouter</Text>
+            </TouchableOpacity>
+          </View>
+
+          {prets.length === 0 ? (
+            <View style={styles.prets_vide}>
+              <CreditCard size={32} color={P.bordure} strokeWidth={1.5} />
+              <Text style={styles.vide_sous}>Aucun prêt enregistré</Text>
+            </View>
+          ) : (
+            prets.map(p => (
+              <TouchableOpacity key={p.id} style={styles.pret_item}
+                onLongPress={() => Alert.alert(p.nom, '', [
+                  { text: '🗑️ Supprimer', style: 'destructive', onPress: () => { supprimerPret(p.id); charger(); } },
+                  { text: 'Annuler', style: 'cancel' },
+                ])}>
+                <View style={styles.pret_top}>
+                  <Text style={styles.pret_nom}>{p.nom}</Text>
+                  <Text style={styles.pret_mensualite}>{fmt(p.mensualite)}/mois</Text>
+                </View>
+                <View style={styles.pret_barre_fond}>
+                  <View style={[styles.pret_barre_rempli, { width: `${Math.min(100, p.pct_rembourse)}%` as any }]} />
+                </View>
+                <View style={styles.pret_footer}>
+                  <Text style={styles.pret_info}>
+                    {fmt(p.montant_rembourse)} remboursé · {Math.round(p.pct_rembourse)}%
+                  </Text>
+                  <Text style={styles.pret_restant}>{fmt(p.montant_restant)} restant</Text>
+                </View>
+                <Text style={styles.pret_duree}>{p.mois_restants} mois restants · Appui long pour supprimer</Text>
+              </TouchableOpacity>
+            ))
+          )}
+
+          {/* Modal ajout prêt */}
+          {modalPret && (
+            <View style={styles.modal_pret}>
+              <Text style={styles.modal_pret_titre}>Nouveau prêt</Text>
+              <TextInput style={styles.input_p} value={nomP} onChangeText={setNomP}
+                placeholder="ex: Prêt voiture" placeholderTextColor="#C4C4C4" />
+              <TextInput style={styles.input_p} value={montantP} onChangeText={setMontantP}
+                placeholder="Montant total emprunté (€)" placeholderTextColor="#C4C4C4"
+                keyboardType="decimal-pad" />
+              <TextInput style={styles.input_p} value={mensualiteP} onChangeText={setMensualiteP}
+                placeholder="Mensualité (€/mois)" placeholderTextColor="#C4C4C4"
+                keyboardType="decimal-pad" />
+              <TextInput style={styles.input_p} value={dureeP} onChangeText={setDureeP}
+                placeholder="Durée totale (en mois)" placeholderTextColor="#C4C4C4"
+                keyboardType="number-pad" />
+              <View style={styles.modal_pret_btns}>
+                <TouchableOpacity style={styles.modal_pret_annuler}
+                  onPress={() => { setModalPret(false); setNomP(''); setMontantP(''); setMensualiteP(''); setDureeP(''); }}>
+                  <Text style={{ color: P.gris, fontWeight: '600' }}>Annuler</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.modal_pret_ok} onPress={ajouterP}>
+                  <Text style={{ color: P.blanc, fontWeight: '700' }}>Ajouter</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+        </View>
+
         <View style={{ height: 110 }} />
       </ScrollView>
 
@@ -289,5 +382,56 @@ const styles = StyleSheet.create({
 
   vide: { alignItems: 'center', paddingTop: 80, gap: 10 },
   vide_titre: { fontSize: 17, fontWeight: '600', color: P.ardoise },
-  vide_sous: { fontSize: 14, color: P.gris },
+  vide_sous: { fontSize: 13, color: P.gris, textAlign: 'center' },
+
+  // ── Prêts ──────────────────────────────────────────────────────────────────
+  prets_section: {
+    backgroundColor: P.blanc, borderRadius: 20, padding: 18,
+    marginHorizontal: 0, marginTop: 16, marginBottom: 8,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04, shadowRadius: 6, elevation: 2,
+  },
+  prets_header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },
+  prets_titre: { fontSize: 16, fontWeight: '700', color: P.ardoise },
+  prets_sous: { fontSize: 11, color: P.gris, marginTop: 2 },
+  prets_btn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#6366F1', borderRadius: 10,
+    paddingHorizontal: 10, paddingVertical: 6,
+  },
+  prets_btn_texte: { fontSize: 12, color: P.blanc, fontWeight: '700' },
+  prets_vide: { alignItems: 'center', paddingVertical: 20, gap: 8 },
+
+  pret_item: {
+    backgroundColor: '#F5F3FF', borderRadius: 14, padding: 14,
+    marginBottom: 10, borderLeftWidth: 3, borderLeftColor: '#6366F1',
+  },
+  pret_top: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
+  pret_nom: { fontSize: 15, fontWeight: '700', color: P.ardoise },
+  pret_mensualite: { fontSize: 13, fontWeight: '600', color: '#6366F1' },
+  pret_barre_fond: { height: 6, backgroundColor: '#E0E7FF', borderRadius: 3, overflow: 'hidden', marginBottom: 6 },
+  pret_barre_rempli: { height: '100%', backgroundColor: '#6366F1', borderRadius: 3 },
+  pret_footer: { flexDirection: 'row', justifyContent: 'space-between' },
+  pret_info: { fontSize: 12, color: '#6366F1' },
+  pret_restant: { fontSize: 12, fontWeight: '700', color: P.ardoise },
+  pret_duree: { fontSize: 11, color: P.gris, marginTop: 4 },
+
+  modal_pret: {
+    marginTop: 16, backgroundColor: P.grisClair,
+    borderRadius: 16, padding: 16, gap: 10,
+  },
+  modal_pret_titre: { fontSize: 15, fontWeight: '700', color: P.ardoise, marginBottom: 4 },
+  input_p: {
+    backgroundColor: P.blanc, borderWidth: 1, borderColor: P.bordure,
+    borderRadius: 12, padding: 12, fontSize: 14, color: P.ardoise,
+  },
+  modal_pret_btns: { flexDirection: 'row', gap: 10, marginTop: 6 },
+  modal_pret_annuler: {
+    flex: 1, padding: 12, borderRadius: 10, alignItems: 'center',
+    backgroundColor: P.blanc, borderWidth: 1, borderColor: P.bordure,
+  },
+  modal_pret_ok: {
+    flex: 1, padding: 12, borderRadius: 10, alignItems: 'center',
+    backgroundColor: '#6366F1',
+  },
 });

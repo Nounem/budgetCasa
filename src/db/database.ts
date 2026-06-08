@@ -1,13 +1,11 @@
 import * as SQLite from 'expo-sqlite';
 
-// Ouvre (ou crée) le fichier budget.db sur le téléphone
 export const db = SQLite.openDatabaseSync('budget.db');
 
 export function initialiserBase() {
-  // WAL = Write-Ahead Logging : rend la base plus rapide et fiable
   db.execSync('PRAGMA journal_mode = WAL;');
 
-  // Table profil : les infos de l'utilisateur (une seule ligne)
+  // ── Profil ─────────────────────────────────────────────────────────────────
   db.runSync(`
     CREATE TABLE IF NOT EXISTS profil (
       id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,14 +19,7 @@ export function initialiserBase() {
     )
   `);
 
-  // Migration : ajouter api_key_cerebras si la colonne n'existe pas encore
-  try {
-    db.runSync(`ALTER TABLE profil ADD COLUMN api_key_cerebras TEXT DEFAULT ''`);
-  } catch {
-    // La colonne existe déjà — c'est normal
-  }
-
-  // Table categorie : pour classer les dépenses et charges
+  // ── Catégorie ──────────────────────────────────────────────────────────────
   db.runSync(`
     CREATE TABLE IF NOT EXISTS categorie (
       id      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,7 +30,7 @@ export function initialiserBase() {
     )
   `);
 
-  // Table charge_fixe : loyer, électricité, abonnements...
+  // ── Charge fixe ────────────────────────────────────────────────────────────
   db.runSync(`
     CREATE TABLE IF NOT EXISTS charge_fixe (
       id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,13 +43,14 @@ export function initialiserBase() {
     )
   `);
 
-  // Table depense : les dépenses saisies au quotidien
+  // ── Dépense ────────────────────────────────────────────────────────────────
   db.runSync(`
     CREATE TABLE IF NOT EXISTS depense (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
       montant      REAL    NOT NULL,
       description  TEXT,
       categorie_id INTEGER,
+      beneficiaire TEXT    NOT NULL DEFAULT 'personnel',
       date         TEXT    NOT NULL DEFAULT (date('now')),
       mois         INTEGER NOT NULL,
       annee        INTEGER NOT NULL,
@@ -66,7 +58,37 @@ export function initialiserBase() {
     )
   `);
 
-  // Table budget_mensuel : résumé calculé par mois
+  // ── Revenu complémentaire ──────────────────────────────────────────────────
+  // periodicite = 'mensuel'  → s'applique tous les mois
+  // periodicite = 'ponctuel' → s'applique uniquement au mois+annee indiqués
+  db.runSync(`
+    CREATE TABLE IF NOT EXISTS revenu (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      nom         TEXT NOT NULL,
+      montant     REAL NOT NULL,
+      type        TEXT NOT NULL DEFAULT 'complementaire',
+      actif       INTEGER NOT NULL DEFAULT 1,
+      periodicite TEXT NOT NULL DEFAULT 'mensuel',
+      mois        INTEGER DEFAULT NULL,
+      annee       INTEGER DEFAULT NULL
+    )
+  `);
+
+  // ── Suivi de prêts ─────────────────────────────────────────────────────────
+  db.runSync(`
+    CREATE TABLE IF NOT EXISTS pret (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      nom           TEXT    NOT NULL,
+      montant_total REAL    NOT NULL,
+      mensualite    REAL    NOT NULL,
+      debut_mois    INTEGER NOT NULL,
+      debut_annee   INTEGER NOT NULL,
+      duree_mois    INTEGER NOT NULL,
+      actif         INTEGER NOT NULL DEFAULT 1
+    )
+  `);
+
+  // ── Budget mensuel ─────────────────────────────────────────────────────────
   db.runSync(`
     CREATE TABLE IF NOT EXISTS budget_mensuel (
       id                   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,48 +102,40 @@ export function initialiserBase() {
     )
   `);
 
-  // Insérer les catégories par défaut si la table est vide
-  const count = db.getFirstSync<{ total: number }>(
-    'SELECT COUNT(*) as total FROM categorie'
-  );
+  // ── Migrations pour bases existantes ──────────────────────────────────────
+  const migrations = [
+    `ALTER TABLE profil ADD COLUMN api_key_cerebras TEXT DEFAULT ''`,
+    `ALTER TABLE depense ADD COLUMN beneficiaire TEXT NOT NULL DEFAULT 'personnel'`,
+    `ALTER TABLE revenu ADD COLUMN mois INTEGER DEFAULT NULL`,
+    `ALTER TABLE revenu ADD COLUMN annee INTEGER DEFAULT NULL`,
+  ];
+  migrations.forEach(sql => {
+    try { db.runSync(sql); } catch { /* colonne déjà existante */ }
+  });
+
+  // ── Catégories par défaut ──────────────────────────────────────────────────
+  const count = db.getFirstSync<{ total: number }>('SELECT COUNT(*) as total FROM categorie');
 
   if (count?.total === 0) {
-    const categoriesFixe = [
-      ['Logement',    'home',          '#EF4444', 'fixe'],
-      ['Transport',   'car',           '#F97316', 'fixe'],
-      ['Abonnements', 'repeat',        '#8B5CF6', 'fixe'],
-      ['Santé',       'medical',       '#EC4899', 'fixe'],
-      ['Prêt',        'cash',          '#6366F1', 'fixe'],
-    ];
-
-    const categoriesVariable = [
-      ['Alimentation', 'cart',                  '#22C55E', 'variable'],
-      ['Restaurants',  'restaurant',            '#EAB308', 'variable'],
-      ['Loisirs',      'game-controller',       '#3B82F6', 'variable'],
-      ['Vêtements',    'shirt',                 '#06B6D4', 'variable'],
-      ['Divers',       'ellipsis-horizontal',   '#94A3B8', 'variable'],
-    ];
-
-    [...categoriesFixe, ...categoriesVariable].forEach(([nom, icone, couleur, type]) => {
-      db.runSync(
-        'INSERT INTO categorie (nom, icone, couleur, type) VALUES (?, ?, ?, ?)',
-        [nom, icone, couleur, type]
-      );
+    [
+      ['Logement',     '#EF4444', 'fixe'],
+      ['Transport',    '#F97316', 'fixe'],
+      ['Abonnements',  '#8B5CF6', 'fixe'],
+      ['Santé',        '#EC4899', 'fixe'],
+      ['Prêt',         '#6366F1', 'fixe'],
+      ['Alimentation', '#22C55E', 'variable'],
+      ['Restaurants',  '#EAB308', 'variable'],
+      ['Loisirs',      '#3B82F6', 'variable'],
+      ['Vêtements',    '#06B6D4', 'variable'],
+      ['Divers',       '#94A3B8', 'variable'],
+    ].forEach(([nom, couleur, type]) => {
+      db.runSync('INSERT INTO categorie (nom, couleur, type) VALUES (?, ?, ?)', [nom, couleur, type]);
     });
   }
 
-  // Ajouter les catégories manquantes pour les bases existantes
-  const categoriesManquantes = [
-    ['Prêt', 'cash', '#6366F1', 'fixe'],
-    ['Loyer', 'home-outline', '#EF4444', 'fixe'],
-  ];
-  categoriesManquantes.forEach(([nom, icone, couleur, type]) => {
+  // Catégories manquantes pour bases existantes
+  [['Prêt', '#6366F1', 'fixe']].forEach(([nom, couleur, type]) => {
     const existe = db.getFirstSync('SELECT id FROM categorie WHERE nom=?', [nom]);
-    if (!existe) {
-      db.runSync(
-        'INSERT INTO categorie (nom, icone, couleur, type) VALUES (?, ?, ?, ?)',
-        [nom, icone, couleur, type]
-      );
-    }
+    if (!existe) db.runSync('INSERT INTO categorie (nom, couleur, type) VALUES (?, ?, ?)', [nom, couleur, type]);
   });
 }

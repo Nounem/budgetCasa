@@ -19,10 +19,29 @@ export type Depense = {
   categorie_id: number;
   categorie_nom: string;
   categorie_couleur: string;
+  beneficiaire: string;
   date: string;
   mois: number;
   annee: number;
 };
+
+export type Revenu = {
+  id: number;
+  nom: string;
+  montant: number;
+  type: string;
+  actif: number;
+  periodicite: string;
+};
+
+// Bénéficiaires disponibles
+export const BENEFICIAIRES = [
+  { id: 'personnel', label: 'Personnel',  emoji: '👤' },
+  { id: 'enfant',    label: 'Enfant',     emoji: '👶' },
+  { id: 'maison',    label: 'Maison',     emoji: '🏠' },
+  { id: 'parents',   label: 'Parents',    emoji: '👴' },
+  { id: 'autre',     label: 'Autre',      emoji: '📦' },
+];
 
 export type ChargeFix = {
   id: number;
@@ -80,6 +99,121 @@ export function getTotalChargesFixes(): number {
   return result?.total ?? 0;
 }
 
+// ─── STATISTIQUES ANNUELLES ───────────────────────────────────────────────────
+
+export type StatMois = { mois: number; total: number };
+
+export type BilanAnnuel = {
+  annee: number;
+  total_revenus: number;
+  total_charges: number;
+  total_depenses: number;
+  epargne: number;
+  par_mois: StatMois[];
+  mois_max: number;
+  mois_min: number;
+};
+
+export function getBilanAnnuel(annee: number): BilanAnnuel {
+  const profil = getProfil();
+  const salaire = profil?.salaire ?? 0;
+
+  // Revenus mensuels récurrents × 12 + ponctuels de l'année
+  const revenusMensuels = db.getFirstSync<{ total: number }>(
+    `SELECT COALESCE(SUM(montant), 0) as total FROM revenu WHERE actif=1 AND periodicite='mensuel'`
+  )?.total ?? 0;
+  const revenus_ponctuels = db.getFirstSync<{ total: number }>(
+    `SELECT COALESCE(SUM(montant), 0) as total FROM revenu WHERE actif=1 AND periodicite='ponctuel' AND annee=?`,
+    [annee]
+  )?.total ?? 0;
+  const total_revenus = (salaire + revenusMensuels) * 12 + revenus_ponctuels;
+
+  // Charges fixes × 12
+  const total_charges = getTotalChargesFixes() * 12;
+
+  // Dépenses réelles de l'année
+  const total_depenses_res = db.getFirstSync<{ total: number }>(
+    `SELECT COALESCE(SUM(montant), 0) as total FROM depense WHERE annee=?`, [annee]
+  )?.total ?? 0;
+
+  // Détail par mois
+  const rows = db.getAllSync<{ mois: number; total: number }>(
+    `SELECT mois, COALESCE(SUM(montant), 0) as total FROM depense WHERE annee=? GROUP BY mois ORDER BY mois`,
+    [annee]
+  );
+  const par_mois: StatMois[] = Array.from({ length: 12 }, (_, i) => {
+    const found = rows.find(r => r.mois === i + 1);
+    return { mois: i + 1, total: found?.total ?? 0 };
+  });
+
+  const max = Math.max(...par_mois.map(m => m.total));
+  const min = Math.min(...par_mois.filter(m => m.total > 0).map(m => m.total));
+
+  return {
+    annee,
+    total_revenus,
+    total_charges,
+    total_depenses: total_depenses_res,
+    epargne: total_revenus - total_charges - total_depenses_res,
+    par_mois,
+    mois_max: par_mois.findIndex(m => m.total === max) + 1,
+    mois_min: par_mois.filter(m => m.total > 0).findIndex(m => m.total === min) + 1,
+  };
+}
+
+// ─── PRÊTS ────────────────────────────────────────────────────────────────────
+
+export type Pret = {
+  id: number;
+  nom: string;
+  montant_total: number;
+  mensualite: number;
+  debut_mois: number;
+  debut_annee: number;
+  duree_mois: number;
+  actif: number;
+  // champs calculés
+  mois_ecoules: number;
+  mois_restants: number;
+  montant_rembourse: number;
+  montant_restant: number;
+  pct_rembourse: number;
+};
+
+export function getPrets(): Pret[] {
+  const now = new Date();
+  const moisActuel = now.getMonth() + 1;
+  const anneeActuelle = now.getFullYear();
+
+  return db.getAllSync<Omit<Pret, 'mois_ecoules' | 'mois_restants' | 'montant_rembourse' | 'montant_restant' | 'pct_rembourse'>>(
+    'SELECT * FROM pret WHERE actif=1 ORDER BY debut_annee DESC, debut_mois DESC'
+  ).map(p => {
+    const ecoules = Math.max(0, (anneeActuelle - p.debut_annee) * 12 + (moisActuel - p.debut_mois));
+    const restants = Math.max(0, p.duree_mois - ecoules);
+    const rembourse = Math.min(p.montant_total, p.mensualite * ecoules);
+    const restant = Math.max(0, p.montant_total - rembourse);
+    return {
+      ...p,
+      mois_ecoules: ecoules,
+      mois_restants: restants,
+      montant_rembourse: rembourse,
+      montant_restant: restant,
+      pct_rembourse: p.montant_total > 0 ? (rembourse / p.montant_total) * 100 : 0,
+    };
+  });
+}
+
+export function ajouterPret(nom: string, montant_total: number, mensualite: number, debut_mois: number, debut_annee: number, duree_mois: number): void {
+  db.runSync(
+    'INSERT INTO pret (nom, montant_total, mensualite, debut_mois, debut_annee, duree_mois) VALUES (?, ?, ?, ?, ?, ?)',
+    [nom, montant_total, mensualite, debut_mois, debut_annee, duree_mois]
+  );
+}
+
+export function supprimerPret(id: number): void {
+  db.runSync('DELETE FROM pret WHERE id=?', [id]);
+}
+
 // ─── DÉPENSES ─────────────────────────────────────────────────────────────────
 
 // Total des dépenses pour un mois donné
@@ -104,17 +238,62 @@ export function getDepensesRecentes(): Depense[] {
   );
 }
 
+// Total revenus complémentaires actifs
+export function getTotalRevenus(): number {
+  const result = db.getFirstSync<{ total: number }>(
+    `SELECT COALESCE(SUM(montant), 0) as total FROM revenu WHERE actif=1 AND periodicite='mensuel'`
+  );
+  return result?.total ?? 0;
+}
+
+// Revenu total = salaire + complémentaires
+export function getRevenuTotal(): number {
+  const profil = getProfil();
+  return (profil?.salaire ?? 0) + getTotalRevenus();
+}
+
+// ─── CRUD REVENUS ─────────────────────────────────────────────────────────────
+
+export function getRevenus(): Revenu[] {
+  return db.getAllSync<Revenu>('SELECT * FROM revenu ORDER BY montant DESC');
+}
+
+export function ajouterRevenu(nom: string, montant: number, type: string, periodicite: string, mois?: number, annee?: number): void {
+  db.runSync(
+    'INSERT INTO revenu (nom, montant, type, periodicite, mois, annee) VALUES (?, ?, ?, ?, ?, ?)',
+    [nom, montant, type, periodicite, mois ?? null, annee ?? null]
+  );
+}
+
+export function modifierRevenu(id: number, nom: string, montant: number, type: string, periodicite: string): void {
+  db.runSync(
+    'UPDATE revenu SET nom=?, montant=?, type=?, periodicite=? WHERE id=?',
+    [nom, montant, type, periodicite, id]
+  );
+}
+
+export function toggleRevenu(id: number, actif: number): void {
+  db.runSync('UPDATE revenu SET actif=? WHERE id=?', [actif ? 0 : 1, id]);
+}
+
+export function supprimerRevenu(id: number): void {
+  db.runSync('DELETE FROM revenu WHERE id=?', [id]);
+}
+
+// ─── DÉPENSES ─────────────────────────────────────────────────────────────────
+
 // Ajouter une dépense
 export function ajouterDepense(
   montant: number,
   description: string,
-  categorie_id: number | null
+  categorie_id: number | null,
+  beneficiaire: string = 'personnel'
 ): void {
   const maintenant = new Date();
   db.runSync(
-    `INSERT INTO depense (montant, description, categorie_id, mois, annee)
-     VALUES (?, ?, ?, ?, ?)`,
-    [montant, description, categorie_id, maintenant.getMonth() + 1, maintenant.getFullYear()]
+    `INSERT INTO depense (montant, description, categorie_id, beneficiaire, mois, annee)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [montant, description, categorie_id, beneficiaire, maintenant.getMonth() + 1, maintenant.getFullYear()]
   );
 }
 
@@ -137,11 +316,12 @@ export function modifierDepense(
   id: number,
   montant: number,
   description: string,
-  categorie_id: number | null
+  categorie_id: number | null,
+  beneficiaire: string = 'personnel'
 ): void {
   db.runSync(
-    `UPDATE depense SET montant=?, description=?, categorie_id=? WHERE id=?`,
-    [montant, description, categorie_id, id]
+    `UPDATE depense SET montant=?, description=?, categorie_id=?, beneficiaire=? WHERE id=?`,
+    [montant, description, categorie_id, beneficiaire, id]
   );
 }
 

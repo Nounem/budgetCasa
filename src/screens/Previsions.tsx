@@ -11,7 +11,8 @@ import * as Sharing from 'expo-sharing';
 import {
   getProfil, getTotalChargesFixes, getTotalDepensesMois,
   getDepensesMois, getHistoriqueMois, getDepensesParCategorie,
-  Depense, MoisResume, DepenseParCategorie,
+  getBilanAnnuel, getPrets,
+  Depense, MoisResume, DepenseParCategorie, BilanAnnuel, Pret,
 } from '../db/queries';
 
 const P = {
@@ -144,24 +145,60 @@ function ComparaisonSection({ historique }: { historique: MoisResume[] }) {
 
 async function analyserAvecIA(
   apiKey: string, salaire: number, charges: number, depenses: Depense[],
-  depensesTotal: number, nbPersonnes: number, nbEnfants: number, nomMois: string
+  depensesTotal: number, nbPersonnes: number, nbEnfants: number, nomMois: string,
+  prets: Pret[]
 ): Promise<string> {
+  // Détail par catégorie
   const parCat: Record<string, number> = {};
   depenses.forEach(d => { parCat[d.categorie_nom] = (parCat[d.categorie_nom] || 0) + d.montant; });
-  const resume = Object.entries(parCat).map(([c, m]) => `${c}: ${m.toFixed(0)}€`).join(', ');
+  const resumeCat = Object.entries(parCat)
+    .sort((a, b) => b[1] - a[1])
+    .map(([c, m]) => `${c}: ${m.toFixed(0)}€`)
+    .join(', ');
 
-  const prompt = `Tu es un conseiller financier expert. Analyse ce budget mensuel en français.
-IMPORTANT: Réponds en texte simple uniquement. Pas de markdown, pas d'astérisques. Utilise des phrases et des sauts de ligne.
+  // Détail par bénéficiaire
+  const parBenef: Record<string, number> = {};
+  depenses.forEach(d => { parBenef[d.beneficiaire] = (parBenef[d.beneficiaire] || 0) + d.montant; });
+  const resumeBenef = Object.entries(parBenef)
+    .map(([b, m]) => `${b}: ${m.toFixed(0)}€`)
+    .join(', ');
 
-PROFIL: Foyer de ${nbPersonnes} personne(s) dont ${nbEnfants} enfant(s)
-MOIS: ${nomMois}
-SALAIRE NET: ${salaire}€
-CHARGES FIXES: ${charges}€ (${((charges/salaire)*100).toFixed(0)}%)
-DÉPENSES: ${depensesTotal}€ (${((depensesTotal/salaire)*100).toFixed(0)}%)
-SOLDE: ${(salaire - charges - depensesTotal).toFixed(0)}€
-DÉTAIL: ${resume || 'Aucune dépense'}
+  // Prêts
+  const resumePrets = prets.length > 0
+    ? prets.map(p => `${p.nom} (${p.mensualite.toFixed(0)}€/mois, ${p.mois_restants} mois restants, ${Math.round(p.pct_rembourse)}% remboursé)`).join(' | ')
+    : 'Aucun prêt';
 
-4 paragraphes séparés par une ligne vide: constat général, points positifs, axes d'amélioration, conseil actionnable.`;
+  const solde = salaire - charges - depensesTotal;
+  const tauxEpargne = salaire > 0 ? ((solde / salaire) * 100).toFixed(0) : '0';
+
+  const prompt = `Tu es un conseiller financier expert et bienveillant. Analyse ce budget réel en français avec des conseils précis et actionnables basés sur les données exactes.
+IMPORTANT: Réponds en texte simple. Pas de markdown, pas d'astérisques. 4 paragraphes séparés par une ligne vide.
+
+═══ PROFIL FAMILLE ═══
+Foyer: ${nbPersonnes} personne(s) dont ${nbEnfants} enfant(s)
+Mois analysé: ${nomMois}
+
+═══ REVENUS ET CHARGES ═══
+Revenus totaux: ${salaire.toFixed(0)}€
+Charges fixes: ${charges.toFixed(0)}€ (${salaire > 0 ? ((charges/salaire)*100).toFixed(0) : 0}% des revenus)
+Dépenses variables: ${depensesTotal.toFixed(0)}€ (${salaire > 0 ? ((depensesTotal/salaire)*100).toFixed(0) : 0}% des revenus)
+Solde disponible: ${solde.toFixed(0)}€
+Taux d'épargne: ${tauxEpargne}%
+
+═══ DÉTAIL DES DÉPENSES PAR CATÉGORIE ═══
+${resumeCat || 'Aucune dépense enregistrée'}
+
+═══ RÉPARTITION PAR BÉNÉFICIAIRE ═══
+${resumeBenef || 'Non renseigné'}
+
+═══ PRÊTS EN COURS ═══
+${resumePrets}
+
+Réponds avec exactement 4 paragraphes:
+1. Constat précis de la situation financière de ce foyer ce mois.
+2. Ce qui va bien dans ce budget (cite des chiffres réels).
+3. Ce qui peut être optimisé (cite des catégories ou montants précis).
+4. Un conseil concret et actionnable pour le mois prochain.`;
 
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
@@ -188,10 +225,13 @@ DÉTAIL: ${resume || 'Aucune dépense'}
 
 async function exporterPDF(
   nom: string, salaire: number, charges: number, depenses: number,
-  parCat: DepenseParCategorie[], analyseIA: string, nomMois: string, annee: number
+  parCat: DepenseParCategorie[], analyseIA: string, nomMois: string, annee: number,
+  depensesList: Depense[], pretsList: Pret[]
 ) {
   const solde = salaire - charges - depenses;
-  const lignes = parCat.map(c => `
+
+  // Tableau catégories
+  const lignesCat = parCat.map(c => `
     <tr>
       <td style="padding:8px;border-bottom:1px solid #f1f5f9">${c.categorie_nom}</td>
       <td style="padding:8px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:600">
@@ -199,30 +239,90 @@ async function exporterPDF(
       </td>
     </tr>`).join('');
 
+  // Tableau bénéficiaires
+  const parBenef: Record<string, number> = {};
+  depensesList.forEach(d => { parBenef[d.beneficiaire] = (parBenef[d.beneficiaire] || 0) + d.montant; });
+  const LABELS: Record<string, string> = { personnel: '👤 Personnel', enfant: '👶 Enfant', maison: '🏠 Maison', parents: '👴 Parents', autre: '📦 Autre' };
+  const lignesBenef = Object.entries(parBenef).map(([b, m]) => `
+    <tr>
+      <td style="padding:8px;border-bottom:1px solid #f1f5f9">${LABELS[b] ?? b}</td>
+      <td style="padding:8px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:600">
+        ${m.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+      </td>
+    </tr>`).join('');
+
+  // Tableau prêts
+  const lignesPrets = pretsList.map(p => `
+    <tr>
+      <td style="padding:8px;border-bottom:1px solid #f1f5f9">${p.nom}</td>
+      <td style="padding:8px;border-bottom:1px solid #f1f5f9;text-align:center">${p.mensualite.toFixed(0)}€/mois</td>
+      <td style="padding:8px;border-bottom:1px solid #f1f5f9;text-align:center">${Math.round(p.pct_rembourse)}%</td>
+      <td style="padding:8px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:600">${p.montant_restant.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })} restant</td>
+    </tr>`).join('');
+
   const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
     <style>
       body{font-family:Arial,sans-serif;color:#1e293b;padding:40px;max-width:700px;margin:auto}
-      h1{color:#065F46;border-bottom:3px solid #065F46;padding-bottom:12px}
-      h2{color:#374151;margin-top:32px}
-      .card{background:#f8fafc;border-radius:12px;padding:20px;margin:16px 0}
+      h1{color:#065F46;border-bottom:3px solid #065F46;padding-bottom:12px;margin-bottom:4px}
+      h2{color:#374151;margin-top:28px;margin-bottom:8px;font-size:16px}
+      .subtitle{color:#6b7280;font-size:13px;margin-bottom:20px}
+      .card{background:#f8fafc;border-radius:12px;padding:20px;margin:12px 0}
       .row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e2e8f0}
-      .solde{font-size:32px;font-weight:bold;color:${solde >= 0 ? '#065F46' : '#dc2626'}}
-      table{width:100%;border-collapse:collapse}
-      .ia{background:#f5f3ff;border-left:4px solid #7c3aed;padding:16px;border-radius:8px;line-height:1.7}
-      .footer{margin-top:40px;color:#94a3b8;font-size:12px;text-align:center}
+      .solde{font-size:28px;font-weight:bold;color:${solde >= 0 ? '#065F46' : '#dc2626'}}
+      .badge{display:inline-block;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;margin-left:8px}
+      .badge-ok{background:#d1fae5;color:#065F46}
+      .badge-warn{background:#fee2e2;color:#dc2626}
+      table{width:100%;border-collapse:collapse;font-size:14px}
+      th{background:#f1f5f9;padding:10px 8px;text-align:left;font-size:12px;color:#6b7280;font-weight:600}
+      .ia{background:#f5f3ff;border-left:4px solid #7c3aed;padding:16px;border-radius:8px;line-height:1.7;font-size:14px}
+      .footer{margin-top:40px;color:#94a3b8;font-size:12px;text-align:center;border-top:1px solid #e2e8f0;padding-top:20px}
+      .progress{height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden;margin-top:4px}
+      .progress-fill{height:100%;background:#065F46;border-radius:4px}
     </style></head><body>
-    <h1>Bilan · ${nomMois} ${annee}</h1>
-    <p>Préparé pour <strong>${nom}</strong></p>
+
+    <h1>budgetCasa · Bilan ${nomMois} ${annee}</h1>
+    <p class="subtitle">Préparé pour <strong>${nom}</strong></p>
+
     <div class="card">
       <h2>Résumé financier</h2>
-      <div class="row"><span>Salaire net</span><strong>${fmt(salaire)}</strong></div>
-      <div class="row"><span>Charges fixes</span><strong style="color:#d97706">${fmt(charges)}</strong></div>
-      <div class="row"><span>Dépenses variables</span><strong style="color:#dc2626">${fmt(depenses)}</strong></div>
-      <div style="padding-top:12px;text-align:right">Solde : <span class="solde">${fmt(solde)}</span></div>
+      <div class="row"><span>Revenus totaux</span><strong>${fmt(salaire)}</strong></div>
+      <div class="row"><span>Charges fixes</span><strong style="color:#d97706">${fmt(charges)} (${salaire > 0 ? ((charges/salaire)*100).toFixed(0) : 0}%)</strong></div>
+      <div class="row"><span>Dépenses variables</span><strong style="color:#dc2626">${fmt(depenses)} (${salaire > 0 ? ((depenses/salaire)*100).toFixed(0) : 0}%)</strong></div>
+      <div style="padding-top:16px;display:flex;align-items:center;gap:12px">
+        <span>Solde :</span>
+        <span class="solde">${fmt(solde)}</span>
+        <span class="badge ${solde >= 0 ? 'badge-ok' : 'badge-warn'}">${salaire > 0 ? ((solde/salaire)*100).toFixed(0) : 0}% du revenu</span>
+      </div>
     </div>
-    ${parCat.length > 0 ? `<div class="card"><h2>Dépenses par catégorie</h2><table>${lignes}</table></div>` : ''}
-    ${analyseIA ? `<div class="card"><h2>Analyse IA</h2><div class="ia">${analyseIA.replace(/\n/g, '<br>')}</div></div>` : ''}
-    <div class="footer">Généré par Mon Budget App</div>
+
+    ${parCat.length > 0 ? `
+    <div class="card">
+      <h2>Dépenses par catégorie</h2>
+      <table><thead><tr><th>Catégorie</th><th style="text-align:right">Montant</th></tr></thead>
+      <tbody>${lignesCat}</tbody></table>
+    </div>` : ''}
+
+    ${Object.keys(parBenef).length > 0 ? `
+    <div class="card">
+      <h2>Dépenses par bénéficiaire</h2>
+      <table><thead><tr><th>Pour qui</th><th style="text-align:right">Montant</th></tr></thead>
+      <tbody>${lignesBenef}</tbody></table>
+    </div>` : ''}
+
+    ${pretsList.length > 0 ? `
+    <div class="card">
+      <h2>Prêts en cours</h2>
+      <table><thead><tr><th>Prêt</th><th>Mensualité</th><th>Avancement</th><th style="text-align:right">Restant</th></tr></thead>
+      <tbody>${lignesPrets}</tbody></table>
+    </div>` : ''}
+
+    ${analyseIA ? `
+    <div class="card">
+      <h2>Analyse IA personnalisée</h2>
+      <div class="ia">${analyseIA.replace(/\n/g, '<br>')}</div>
+    </div>` : ''}
+
+    <div class="footer">Généré par <strong>budgetCasa</strong> · ${nomMois} ${annee}</div>
     </body></html>`;
 
   const { uri } = await Print.printToFileAsync({ html, base64: false });
@@ -241,6 +341,9 @@ export default function Previsions() {
   const [analyseIA, setAnalyseIA]     = useState('');
   const [chargementIA, setChargIA]    = useState(false);
   const [exportEnCours, setExport]    = useState(false);
+  const [onglet, setOnglet]           = useState<'mois' | 'annee'>('mois');
+  const [bilan, setBilan]             = useState<BilanAnnuel | null>(null);
+  const [prets, setPrets]             = useState<Pret[]>([]);
 
   useFocusEffect(useCallback(() => {
     if (Platform.OS === 'web') return;
@@ -258,6 +361,8 @@ export default function Previsions() {
       pret: true,
     });
     setHistorique(getHistoriqueMois());
+    setBilan(getBilanAnnuel(annee));
+    setPrets(getPrets());
     setAnalyseIA('');
   }, []));
 
@@ -269,7 +374,8 @@ export default function Previsions() {
       const r = await analyserAvecIA(
         donnees.apiKey, donnees.salaire, donnees.charges,
         donnees.depensesList, donnees.depenses,
-        donnees.nbPersonnes, donnees.nbEnfants, nomMois
+        donnees.nbPersonnes, donnees.nbEnfants, nomMois,
+        prets
       );
       setAnalyseIA(r);
     } catch (e: any) { setAnalyseIA(`Erreur : ${e.message}`); }
@@ -284,7 +390,8 @@ export default function Previsions() {
       const parCat = getDepensesParCategorie(mois, annee);
       await exporterPDF(
         profil?.nom ?? '', donnees.salaire, donnees.charges, donnees.depenses,
-        parCat, analyseIA, nomMois, annee
+        parCat, analyseIA, nomMois, annee,
+        donnees.depensesList, prets
       );
     } catch (e: any) { Alert.alert('Erreur', e.message); }
     finally { setExport(false); }
@@ -304,6 +411,129 @@ export default function Previsions() {
         <Text style={styles.header_titre}>Prévisions</Text>
         <Text style={styles.header_sous}>{nomMois} {annee}</Text>
       </View>
+
+      {/* Sélecteur onglets */}
+      <View style={styles.onglets_row}>
+        {[
+          { id: 'mois', label: 'Ce mois' },
+          { id: 'annee', label: `Année ${annee}` },
+        ].map(o => (
+          <TouchableOpacity key={o.id}
+            style={[styles.onglet_btn, onglet === o.id && styles.onglet_btn_actif]}
+            onPress={() => setOnglet(o.id as 'mois' | 'annee')}>
+            <Text style={[styles.onglet_texte, onglet === o.id && styles.onglet_texte_actif]}>
+              {o.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* ══ VUE ANNUELLE ══════════════════════════════════════════════════════ */}
+      {onglet === 'annee' && bilan && (
+        <>
+          {/* Bilan annuel */}
+          <View style={styles.carte}>
+            <View style={styles.carte_header}>
+              <TrendingUp size={16} color={P.emeraldMid} strokeWidth={2} />
+              <Text style={styles.carte_titre}>Bilan {bilan.annee}</Text>
+            </View>
+            <View style={[styles.bento_grid, { marginTop: 16 }]}>
+              <View style={[styles.bento, { flex: 1 }]}>
+                <Text style={styles.bento_label}>Revenus totaux</Text>
+                <Text style={[styles.bento_valeur, { color: P.emeraldMid, fontSize: 16 }]}>{fmt(bilan.total_revenus)}</Text>
+              </View>
+              <View style={[styles.bento, { flex: 1 }]}>
+                <Text style={styles.bento_label}>Charges totales</Text>
+                <Text style={[styles.bento_valeur, { color: P.ambre, fontSize: 16 }]}>{fmt(bilan.total_charges)}</Text>
+              </View>
+            </View>
+            <View style={[styles.bento_grid, { marginTop: 8 }]}>
+              <View style={[styles.bento, { flex: 1 }]}>
+                <Text style={styles.bento_label}>Dépenses réelles</Text>
+                <Text style={[styles.bento_valeur, { color: P.rouge, fontSize: 16 }]}>{fmt(bilan.total_depenses)}</Text>
+              </View>
+              <View style={[styles.bento, { flex: 1, backgroundColor: bilan.epargne >= 0 ? P.emeraldLight : P.rougeLight }]}>
+                <Text style={styles.bento_label}>Épargne réelle</Text>
+                <Text style={[styles.bento_valeur, { color: bilan.epargne >= 0 ? P.emerald : P.rouge, fontSize: 16 }]}>
+                  {fmt(bilan.epargne)}
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Graphique mois par mois */}
+          <View style={styles.carte}>
+            <View style={styles.carte_header}>
+              <BarChart3 size={16} color={P.bleu} strokeWidth={2} />
+              <Text style={styles.carte_titre}>Dépenses mois par mois</Text>
+            </View>
+            <View style={{ marginTop: 16, gap: 8 }}>
+              {bilan.par_mois.filter(m => m.total > 0).map(m => {
+                const max = Math.max(...bilan.par_mois.map(x => x.total), 1);
+                const pct = (m.total / max) * 100;
+                const isBest = m.mois === bilan.mois_max;
+                return (
+                  <View key={m.mois}>
+                    <View style={styles.bar_header}>
+                      <Text style={[styles.bar_nom, { width: 36 }]}>
+                        {NOMS_MOIS[m.mois - 1]}
+                      </Text>
+                      <View style={[styles.bar_fond, { flex: 1, marginHorizontal: 8 }]}>
+                        <View style={[styles.bar_rempli, {
+                          width: `${pct}%` as any,
+                          backgroundColor: isBest ? P.rouge : P.bleu,
+                        }]} />
+                      </View>
+                      <Text style={[styles.bar_montant, { color: isBest ? P.rouge : P.ardoise }]}>
+                        {fmt(m.total)}
+                      </Text>
+                    </View>
+                  </View>
+                );
+              })}
+              {bilan.par_mois.every(m => m.total === 0) && (
+                <Text style={styles.vide_sous}>Aucune dépense cette année</Text>
+              )}
+            </View>
+          </View>
+
+          {/* Prêts en cours */}
+          {prets.length > 0 && (
+            <View style={styles.carte}>
+              <View style={styles.carte_header}>
+                <FileText size={16} color={P.violet} strokeWidth={2} />
+                <Text style={styles.carte_titre}>Prêts en cours</Text>
+              </View>
+              <View style={{ marginTop: 16, gap: 16 }}>
+                {prets.map(p => (
+                  <View key={p.id}>
+                    <View style={styles.bar_header}>
+                      <Text style={[styles.bar_nom, { flex: 1, fontSize: 14, fontWeight: '600' }]}>{p.nom}</Text>
+                      <Text style={styles.bar_montant}>{fmt(p.montant_restant)} restant</Text>
+                    </View>
+                    <View style={styles.bar_fond}>
+                      <View style={[styles.bar_rempli, {
+                        width: `${p.pct_rembourse}%` as any,
+                        backgroundColor: P.emeraldMid,
+                      }]} />
+                    </View>
+                    <View style={[styles.bar_header, { marginTop: 4 }]}>
+                      <Text style={[styles.bento_label, { flex: 1 }]}>
+                        {Math.round(p.pct_rembourse)}% remboursé · {p.mois_restants} mois restants
+                      </Text>
+                      <Text style={styles.bento_label}>{fmt(p.mensualite)}/mois</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+        </>
+      )}
+
+      {/* ══ VUE MENSUELLE ═════════════════════════════════════════════════════ */}
+      {onglet === 'mois' && (
+        <>
 
       {/* Score de santé */}
       <View style={styles.carte}>
@@ -423,6 +653,10 @@ export default function Previsions() {
       </View>
 
       <View style={{ height: 110 }} />
+
+        </> /* fin onglet mois */
+      )}
+
     </ScrollView>
   );
 }
@@ -464,6 +698,18 @@ const styles = StyleSheet.create({
 
   bar_header: { flexDirection: 'row', alignItems: 'center', marginBottom: 5 },
   bar_left: { flexDirection: 'row', alignItems: 'center', gap: 7, flex: 1 },
+  // Onglets mois/année
+  onglets_row: {
+    flexDirection: 'row', gap: 8, marginBottom: 16,
+    backgroundColor: P.grisClair, borderRadius: 14, padding: 4,
+  },
+  onglet_btn: {
+    flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center',
+  },
+  onglet_btn_actif: { backgroundColor: P.blanc, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 4, elevation: 2 },
+  onglet_texte: { fontSize: 14, fontWeight: '600', color: P.gris },
+  onglet_texte_actif: { color: P.ardoise },
+
   bar_dot: { width: 8, height: 8, borderRadius: 4 },
   bar_nom: { fontSize: 13, color: P.ardoise, fontWeight: '500' },
   bar_montant: { fontSize: 12, fontWeight: '700', color: P.ardoise, marginRight: 8 },

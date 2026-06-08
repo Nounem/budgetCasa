@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView, Platform, TouchableOpacity } from '
 import { useFocusEffect } from '@react-navigation/native';
 import { Bell, ArrowDownLeft, ArrowUpRight, Wallet, CalendarDays } from 'lucide-react-native';
 
-import { getProfil, getTotalChargesFixes, getTotalDepensesMois, getDepensesRecentes, Depense } from '../db/queries';
+import { getProfil, getTotalChargesFixes, getTotalDepensesMois, getDepensesRecentes, getRevenuTotal, Depense } from '../db/queries';
 import { DonutChart, Segment } from '../components/DonutChart';
 
 // ─── PALETTE ──────────────────────────────────────────────────────────────────
@@ -166,7 +166,7 @@ export default function Dashboard() {
       const profil = getProfil();
       setD({
         nom: profil?.nom ?? '',
-        salaire: profil?.salaire ?? 0,
+        salaire: getRevenuTotal(),
         charges: getTotalChargesFixes(),
         depenses: getTotalDepensesMois(mois, annee),
         recentes: getDepensesRecentes(),
