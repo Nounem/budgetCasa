@@ -9,6 +9,8 @@ import {
 import {
   getProfil, sauvegarderProfil,
   getRevenus, ajouterRevenu, modifierRevenu, toggleRevenu, supprimerRevenu, Revenu,
+  getCategories, getBudgetsCibles, setBudgetCible, supprimerBudgetCible,
+  BudgetCible, Categorie,
 } from '../db/queries';
 
 const P = {
@@ -77,6 +79,11 @@ export default function Parametres() {
   const [apiKey, setApiKey]         = useState('');
   const [sauvegarde, setSauvegarde] = useState(false);
   const [revenus, setRevenus]       = useState<Revenu[]>([]);
+  const [budgets, setBudgets]       = useState<BudgetCible[]>([]);
+  const [cats, setCats]             = useState<Categorie[]>([]);
+  const [showBudgetModal, setShowBudgetModal] = useState(false);
+  const [catSelectee, setCatSelect] = useState<number | null>(null);
+  const [montantCible, setMontantCible] = useState('');
   const [showModal, setShowModal]   = useState(false);
   const [nomR, setNomR]             = useState('');
   const [montantR, setMontantR]     = useState('');
@@ -96,7 +103,20 @@ export default function Parametres() {
       setApiKey(p.api_key_cerebras || '');
     }
     setRevenus(getRevenus());
+    const now = new Date();
+    setBudgets(getBudgetsCibles(now.getMonth() + 1, now.getFullYear()));
+    setCats(getCategories('variable'));
   }, []);
+
+  function ajouterBudget() {
+    if (!catSelectee) { Alert.alert('', 'Choisis une catégorie'); return; }
+    const m = parseFloat(montantCible.replace(',', '.'));
+    if (isNaN(m) || m <= 0) { Alert.alert('', 'Saisis un montant valide'); return; }
+    setBudgetCible(catSelectee, m);
+    const now = new Date();
+    setBudgets(getBudgetsCibles(now.getMonth() + 1, now.getFullYear()));
+    setCatSelect(null); setMontantCible(''); setShowBudgetModal(false);
+  }
 
   function enregistrer() {
     if (WEB) { Alert.alert('Info', 'Sauvegarde disponible uniquement sur mobile.'); return; }
@@ -291,6 +311,72 @@ export default function Parametres() {
           <Champ label="Dont enfants à charge" icone={<Baby size={15} color={P.emeraldMid} strokeWidth={2} />}>
             <Compteur valeur={nbEnfants} min={0} max={nbPersonnes} onChange={setNbEnf} />
           </Champ>
+        </View>
+
+        {/* Section Budget cible */}
+        <View style={styles.section_carte}>
+          <View style={styles.section_header_row}>
+            <Text style={styles.section_label}>BUDGETS PAR CATÉGORIE</Text>
+            <TouchableOpacity style={styles.mini_btn} onPress={() => setShowBudgetModal(true)}>
+              <Plus size={14} color={P.emerald} strokeWidth={2.5} />
+              <Text style={styles.mini_btn_texte}>Ajouter</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.champ_aide}>
+            Fixe un plafond de dépenses par catégorie — une alerte apparaît dans Prévisions.
+          </Text>
+
+          {budgets.length === 0 ? (
+            <Text style={styles.vide_texte}>Aucun budget cible défini</Text>
+          ) : budgets.map(b => (
+            <View key={b.id} style={styles.revenu_item}>
+              <View style={[{ width: 10, height: 10, borderRadius: 5, backgroundColor: b.categorie_couleur }]} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.revenu_nom}>{b.categorie_nom}</Text>
+                <Text style={styles.revenu_type}>
+                  {b.depenses_mois.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })} / {b.montant_max.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 })}
+                  {b.depasse ? '  ⚠️ Dépassé' : ''}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => { supprimerBudgetCible(b.id); const n = new Date(); setBudgets(getBudgetsCibles(n.getMonth()+1, n.getFullYear())); }}>
+                <Trash2 size={16} color={P.gris} strokeWidth={2} />
+              </TouchableOpacity>
+            </View>
+          ))}
+
+          {showBudgetModal && (
+            <View style={styles.modal_inline}>
+              <Text style={styles.modal_titre}>Nouveau budget cible</Text>
+              <Text style={[styles.section_label, { marginBottom: 8 }]}>CATÉGORIE</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {cats.map(c => (
+                  <TouchableOpacity key={c.id}
+                    style={[styles.type_option, {
+                      borderWidth: 1.5, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7,
+                      borderColor: catSelectee === c.id ? c.couleur : P.bordure,
+                      backgroundColor: catSelectee === c.id ? c.couleur + '18' : P.blanc,
+                    }]}
+                    onPress={() => setCatSelect(c.id)}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: c.couleur }} />
+                    <Text style={[{ fontSize: 13, color: P.gris },
+                      catSelectee === c.id && { color: c.couleur, fontWeight: '700' }]}>{c.nom}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={[styles.champ_label, { marginTop: 12, marginBottom: 8 }]}>Plafond mensuel (€)</Text>
+              <TextInput style={styles.input} value={montantCible} onChangeText={setMontantCible}
+                placeholder="ex: 200" placeholderTextColor="#C4C4C4" keyboardType="decimal-pad" />
+              <View style={styles.modal_btns}>
+                <TouchableOpacity style={styles.modal_btn_annuler}
+                  onPress={() => { setShowBudgetModal(false); setCatSelect(null); setMontantCible(''); }}>
+                  <Text style={{ color: P.gris, fontWeight: '600' }}>Annuler</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.modal_btn_ok} onPress={ajouterBudget}>
+                  <Text style={{ color: P.blanc, fontWeight: '700' }}>Définir</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
         </View>
 
         {/* Section IA */}

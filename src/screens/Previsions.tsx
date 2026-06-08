@@ -11,8 +11,8 @@ import * as Sharing from 'expo-sharing';
 import {
   getProfil, getTotalChargesFixes, getTotalDepensesMois,
   getDepensesMois, getHistoriqueMois, getDepensesParCategorie,
-  getBilanAnnuel, getPrets,
-  Depense, MoisResume, DepenseParCategorie, BilanAnnuel, Pret,
+  getBilanAnnuel, getPrets, getBudgetsCibles,
+  Depense, MoisResume, DepenseParCategorie, BilanAnnuel, Pret, BudgetCible,
 } from '../db/queries';
 
 const P = {
@@ -344,6 +344,7 @@ export default function Previsions() {
   const [onglet, setOnglet]           = useState<'mois' | 'annee'>('mois');
   const [bilan, setBilan]             = useState<BilanAnnuel | null>(null);
   const [prets, setPrets]             = useState<Pret[]>([]);
+  const [budgetsCibles, setBudgets]   = useState<BudgetCible[]>([]);
 
   useFocusEffect(useCallback(() => {
     if (Platform.OS === 'web') return;
@@ -363,6 +364,7 @@ export default function Previsions() {
     setHistorique(getHistoriqueMois());
     setBilan(getBilanAnnuel(annee));
     setPrets(getPrets());
+    setBudgets(getBudgetsCibles(mois, annee));
     setAnalyseIA('');
   }, []));
 
@@ -592,6 +594,53 @@ export default function Previsions() {
       {/* Comparaison mois */}
       <ComparaisonSection historique={historique} />
 
+      {/* Stats par bénéficiaire */}
+      {donnees.depensesList.length > 0 && (() => {
+        const parBenef: Record<string, number> = {};
+        donnees.depensesList.forEach(d => {
+          parBenef[d.beneficiaire] = (parBenef[d.beneficiaire] || 0) + d.montant;
+        });
+        const LABELS: Record<string, string> = {
+          personnel: '👤 Personnel', enfant: '👶 Enfant',
+          maison: '🏠 Maison', parents: '👴 Parents', autre: '📦 Autre',
+        };
+        const COLORS: Record<string, string> = {
+          personnel: P.bleu, enfant: '#F472B6',
+          maison: P.emeraldMid, parents: P.ambre, autre: P.gris,
+        };
+        const entries = Object.entries(parBenef).sort((a, b) => b[1] - a[1]);
+        const max = Math.max(...entries.map(e => e[1]), 1);
+        return (
+          <View style={styles.carte}>
+            <View style={styles.carte_header}>
+              <BarChart3 size={16} color={P.emeraldMid} strokeWidth={2} />
+              <Text style={styles.carte_titre}>Dépenses par bénéficiaire</Text>
+            </View>
+            <View style={{ marginTop: 16, gap: 12 }}>
+              {entries.map(([b, montant]) => (
+                <View key={b}>
+                  <View style={styles.bar_header}>
+                    <Text style={[styles.bar_nom, { flex: 1 }]}>{LABELS[b] ?? b}</Text>
+                    <Text style={[styles.bar_montant, { color: COLORS[b] ?? P.gris }]}>
+                      {fmt(montant)}
+                    </Text>
+                    <Text style={styles.bar_pct}>
+                      {donnees.depenses > 0 ? Math.round((montant / donnees.depenses) * 100) : 0}%
+                    </Text>
+                  </View>
+                  <View style={styles.bar_fond}>
+                    <View style={[styles.bar_rempli, {
+                      width: `${(montant / max) * 100}%` as any,
+                      backgroundColor: COLORS[b] ?? P.gris,
+                    }]} />
+                  </View>
+                </View>
+              ))}
+            </View>
+          </View>
+        );
+      })()}
+
       {/* Graphique catégories */}
       <View style={styles.carte}>
         <View style={styles.carte_header}>
@@ -602,6 +651,47 @@ export default function Previsions() {
           <GraphiqueCategories depenses={donnees.depensesList} total={donnees.depenses} />
         </View>
       </View>
+
+      {/* Budget cible par catégorie */}
+      {budgetsCibles.length > 0 && (
+        <View style={styles.carte}>
+          <View style={styles.carte_header}>
+            <Heart size={16} color={P.ambre} strokeWidth={2} />
+            <Text style={styles.carte_titre}>Budgets par catégorie</Text>
+          </View>
+          <View style={{ marginTop: 16, gap: 14 }}>
+            {budgetsCibles.map(bc => (
+              <View key={bc.id}>
+                <View style={styles.bar_header}>
+                  <View style={[styles.bar_left]}>
+                    <View style={[styles.bar_dot, { backgroundColor: bc.categorie_couleur }]} />
+                    <Text style={styles.bar_nom}>{bc.categorie_nom}</Text>
+                    {bc.depasse && (
+                      <Text style={{ fontSize: 10, color: P.rouge, fontWeight: '700',
+                        backgroundColor: P.rougeLight, paddingHorizontal: 6, paddingVertical: 2,
+                        borderRadius: 8 }}>
+                        DÉPASSÉ
+                      </Text>
+                    )}
+                  </View>
+                  <Text style={[styles.bar_montant, { color: bc.depasse ? P.rouge : P.ardoise }]}>
+                    {fmt(bc.depenses_mois)} / {fmt(bc.montant_max)}
+                  </Text>
+                </View>
+                <View style={styles.bar_fond}>
+                  <View style={[styles.bar_rempli, {
+                    width: `${Math.min(100, bc.pct_utilise)}%` as any,
+                    backgroundColor: bc.depasse ? P.rouge : bc.pct_utilise > 80 ? P.ambre : bc.categorie_couleur,
+                  }]} />
+                </View>
+                <Text style={{ fontSize: 11, color: P.gris, marginTop: 3 }}>
+                  {Math.round(bc.pct_utilise)}% utilisé · reste {fmt(Math.max(0, bc.montant_max - bc.depenses_mois))}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
 
       {/* Export PDF */}
       <TouchableOpacity style={styles.btn_pdf} onPress={lancerPDF} disabled={exportEnCours}>

@@ -88,6 +88,17 @@ export function initialiserBase() {
     )
   `);
 
+  // ── Budget cible par catégorie ─────────────────────────────────────────────
+  db.runSync(`
+    CREATE TABLE IF NOT EXISTS budget_cible (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      categorie_id INTEGER NOT NULL UNIQUE,
+      montant_max  REAL    NOT NULL,
+      actif        INTEGER NOT NULL DEFAULT 1,
+      FOREIGN KEY (categorie_id) REFERENCES categorie(id)
+    )
+  `);
+
   // ── Budget mensuel ─────────────────────────────────────────────────────────
   db.runSync(`
     CREATE TABLE IF NOT EXISTS budget_mensuel (

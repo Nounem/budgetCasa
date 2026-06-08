@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, Modal, Alert, Platform,
+  TextInput, Modal, Alert, Platform, FlatList,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { Plus, Receipt, CreditCard } from 'lucide-react-native';
@@ -191,6 +191,7 @@ export default function Depenses() {
   const [categories, setCategories] = useState<Categorie[]>([]);
   const [modal, setModal]           = useState(false);
   const [aModifier, setAModifier]   = useState<Depense | null>(null);
+  const [filtre, setFiltre]         = useState<string>('tous');
 
   useFocusEffect(useCallback(() => {
     if (Platform.OS === 'web') return;
@@ -209,7 +210,11 @@ export default function Depenses() {
     charger();
   }
 
-  const total = depenses.reduce((s, d) => s + d.montant, 0);
+  const depensesFiltrees = filtre === 'tous'
+    ? depenses
+    : depenses.filter(d => d.beneficiaire === filtre);
+
+  const total = depensesFiltrees.reduce((s, d) => s + d.montant, 0);
 
   return (
     <View style={styles.ecran}>
@@ -228,6 +233,33 @@ export default function Depenses() {
         </TouchableOpacity>
       </View>
 
+      {/* ── Filtre bénéficiaires ─────────────────── */}
+      {depenses.length > 0 && (
+        <ScrollView
+          horizontal showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filtres_row}>
+          {[{ id: 'tous', label: 'Tous', emoji: '📋' }, ...BENEFICIAIRES].map(b => {
+            const count = b.id === 'tous'
+              ? depenses.length
+              : depenses.filter(d => d.beneficiaire === b.id).length;
+            if (b.id !== 'tous' && count === 0) return null;
+            return (
+              <TouchableOpacity key={b.id}
+                style={[styles.filtre_btn, filtre === b.id && styles.filtre_btn_actif]}
+                onPress={() => setFiltre(b.id)}>
+                <Text style={styles.filtre_emoji}>{b.emoji}</Text>
+                <Text style={[styles.filtre_texte, filtre === b.id && styles.filtre_texte_actif]}>
+                  {b.label}
+                </Text>
+                <Text style={[styles.filtre_count, filtre === b.id && styles.filtre_count_actif]}>
+                  {count}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      )}
+
       {/* Total du mois */}
       {depenses.length > 0 && (
         <View style={styles.total_carte}>
@@ -242,14 +274,18 @@ export default function Depenses() {
       {/* Liste */}
       <ScrollView style={styles.liste} contentContainerStyle={styles.liste_contenu}
         showsVerticalScrollIndicator={false}>
-        {depenses.length === 0 ? (
+        {depensesFiltrees.length === 0 ? (
           <View style={styles.vide}>
             <Receipt size={48} color={P.bordure} strokeWidth={1.5} />
-            <Text style={styles.vide_titre}>Aucune dépense ce mois</Text>
-            <Text style={styles.vide_sous}>Appuie sur + pour commencer</Text>
+            <Text style={styles.vide_titre}>
+              {filtre === 'tous' ? 'Aucune dépense ce mois' : 'Aucune dépense ici'}
+            </Text>
+            <Text style={styles.vide_sous}>
+              {filtre === 'tous' ? 'Appuie sur + pour commencer' : 'Essaie un autre filtre'}
+            </Text>
           </View>
         ) : (
-          depenses.map(d => (
+          depensesFiltrees.map(d => (
             <ItemDepense key={d.id} depense={d}
               onModifier={() => { setAModifier(d); setModal(true); }}
               onSupprimer={() => { supprimerDepense(d.id); charger(); }}
@@ -312,4 +348,28 @@ const styles = StyleSheet.create({
   vide: { alignItems: 'center', paddingTop: 80, gap: 10 },
   vide_titre: { fontSize: 17, fontWeight: '600', color: P.ardoise },
   vide_sous: { fontSize: 14, color: P.gris },
+
+  // Filtres bénéficiaires
+  filtres_row: {
+    paddingHorizontal: 20, paddingVertical: 12,
+    gap: 8, flexDirection: 'row',
+  },
+  filtre_btn: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: P.blanc, borderRadius: 20,
+    paddingHorizontal: 12, paddingVertical: 7,
+    borderWidth: 1, borderColor: P.bordure,
+  },
+  filtre_btn_actif: {
+    backgroundColor: P.emerald, borderColor: P.emerald,
+  },
+  filtre_emoji: { fontSize: 13 },
+  filtre_texte: { fontSize: 13, color: P.gris, fontWeight: '600' },
+  filtre_texte_actif: { color: P.blanc },
+  filtre_count: {
+    fontSize: 11, color: P.gris,
+    backgroundColor: P.grisClair, borderRadius: 10,
+    paddingHorizontal: 6, paddingVertical: 1,
+  },
+  filtre_count_actif: { color: P.emerald, backgroundColor: 'rgba(255,255,255,0.25)' },
 });

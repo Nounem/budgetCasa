@@ -424,6 +424,59 @@ export function getDepensesParCategorie(mois: number, annee: number): DepensePar
   );
 }
 
+// ─── BUDGET CIBLE PAR CATÉGORIE ───────────────────────────────────────────────
+
+export type BudgetCible = {
+  id: number;
+  categorie_id: number;
+  categorie_nom: string;
+  categorie_couleur: string;
+  montant_max: number;
+  actif: number;
+  depenses_mois: number;  // calculé
+  pct_utilise: number;    // calculé
+  depasse: boolean;       // calculé
+};
+
+export function getBudgetsCibles(mois: number, annee: number): BudgetCible[] {
+  const cibles = db.getAllSync<{
+    id: number; categorie_id: number; montant_max: number; actif: number;
+    categorie_nom: string; categorie_couleur: string;
+  }>(
+    `SELECT bc.*, c.nom as categorie_nom, c.couleur as categorie_couleur
+     FROM budget_cible bc
+     JOIN categorie c ON bc.categorie_id = c.id
+     WHERE bc.actif = 1
+     ORDER BY c.nom`
+  );
+
+  return cibles.map(bc => {
+    const dep = db.getFirstSync<{ total: number }>(
+      `SELECT COALESCE(SUM(montant), 0) as total FROM depense WHERE categorie_id=? AND mois=? AND annee=?`,
+      [bc.categorie_id, mois, annee]
+    )?.total ?? 0;
+    return {
+      ...bc,
+      depenses_mois: dep,
+      pct_utilise: bc.montant_max > 0 ? (dep / bc.montant_max) * 100 : 0,
+      depasse: dep > bc.montant_max,
+    };
+  });
+}
+
+export function setBudgetCible(categorie_id: number, montant_max: number): void {
+  const existe = db.getFirstSync('SELECT id FROM budget_cible WHERE categorie_id=?', [categorie_id]);
+  if (existe) {
+    db.runSync('UPDATE budget_cible SET montant_max=?, actif=1 WHERE categorie_id=?', [montant_max, categorie_id]);
+  } else {
+    db.runSync('INSERT INTO budget_cible (categorie_id, montant_max) VALUES (?, ?)', [categorie_id, montant_max]);
+  }
+}
+
+export function supprimerBudgetCible(id: number): void {
+  db.runSync('DELETE FROM budget_cible WHERE id=?', [id]);
+}
+
 export function getCategories(type?: 'fixe' | 'variable'): Categorie[] {
   if (type) {
     return db.getAllSync<Categorie>('SELECT * FROM categorie WHERE type=? ORDER BY nom', [type]);
